@@ -14,40 +14,59 @@ class Sender(BasicSender.BasicSender):
             raise NotImplementedError #remove this line when you implement SACK
         self.RETRANSMIT_TIME = 500;
         self.WINDOW_SIZE = 5;
+        self.inflight = []
+        self.inflight_seqno = []
 
     # Main sending loop.
     def start(self):
         seqno = 0
         # Note: this reads in 1400 characters at a time, which equals 1400 bytes.
-        msg = self.infile.read(1400)
+        msgs = self.splitInput()
+        #msg = self.infile.read(1400)
         msg_type = None
-        while not msg_type == 'end':
-            next_msg = self.infile.read(1400)
-
-            msg_type = 'data'
-            if seqno == 0:
-                msg_type = 'start'
-            elif next_msg == "":
-                msg_type = 'end'
-
-            packet = self.make_packet(msg_type,seqno,msg)
-            self.send(packet)
-            print "sent: %s" % packet
-
+        while (not (msg_type == 'end' and len(self.inflight) == 0)):
+            while (len(self.inflight) < self.WINDOW_SIZE and len(msgs) > 0):
+                next_msg = msgs.pop(0)
+                msg_type = 'data'
+                if seqno == 0:
+                    msg_type = 'start'
+                elif (next_msg == ""):
+                    msg_type = 'end'
+                    break
+                packet = self.make_packet(msg_type,seqno,next_msg)
+                self.inflight.append(packet)
+                self.inflight_seqno.append(seqno)
+                self.send(packet)
+                seqno += 1
+                print "sent: %s" % packet
             response = self.receive(self.RETRANSMIT_TIME)
             if (response != None):
                 self.handle_response(response)
             else:
                 self.handle_timeout()
-            msg = next_msg
-            seqno += 1
-
         self.infile.close()
+
+    # Splits input into 1400 byte strings.
+    def splitInput(self):
+        messages = []
+        msg = self.infile.read(1400)
+        messages.append(msg)
+        while msg != "":
+            msg = self.infile.read(1400)
+            messages.append(msg)
+        return messages
 
     # Handles a response from the receiver.
     def handle_response(self,response_packet):
         if Checksum.validate_checksum(response_packet):
             print "recv: %s" % response_packet
+            msg_type, seqno, data, checksum = self.split_packet(response_packet)
+            if ((int(seqno) - 1) == self.inflight_seqno[0]):
+                self.inflight_seqno.pop(0)
+                self.inflight.pop(0)
+            else:
+                #Need to handle duplicate logic here.
+
         else:
             print "recv: %s <--- CHECKSUM FAILED" % response_packet
         # Need to extend this to include reliability
